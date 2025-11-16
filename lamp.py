@@ -29,17 +29,8 @@ SLEEP_TO = "08:00"
 developing = s.settings()
 # path for local database
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-#db_path = os.path.join(BASE_DIR, "database.db")
 log_path = os.path.join(BASE_DIR, "log.log")
 DB_FILE = "local_cache.sqlite"
-
-
-# TODO
-# dev branch
-# edit print statement in main loop
-# manage logging statements
-# fix daylight toggle time (check 02:05?), determine which is closer sr/ss
-# If lamp has been toggled and 8h has passed, do not turn on lamp if time is sleep hours
 
 
 def main():
@@ -352,4 +343,3 @@ if __name__ == "__main__":
                             format="%(asctime)s - %(levelname)s - %(message)s")
     logging.info("lamp.py stared")
     main()
-    #CtrlLamp()
