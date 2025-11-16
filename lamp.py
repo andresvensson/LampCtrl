@@ -88,7 +88,7 @@ def check_interrupts() -> dict:
     try:
         db = pymysql.connect(host=h, user=u, passwd=p, db=d)
         c = db.cursor()
-        c.execute(f"SELECT * FROM eventlog WHERE unit_id={LIGHT_ID} ORDER BY value_id DESC LIMIT 1")
+        c.execute(f"SELECT * FROM eventlog WHERE unit_id=3 ORDER BY value_id DESC LIMIT 1")
         sql = c.fetchone()
         c.close()
 
