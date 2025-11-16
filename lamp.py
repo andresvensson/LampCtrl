@@ -15,6 +15,8 @@ import traceback
 import secret as s
 from phue import Bridge
 
+from old_lamp import BASE_DIR
+
 # CONFIG
 
 # hours to sleep if lamp toggled by homepage:
@@ -28,9 +30,11 @@ developing = s.settings()
 # path for local database
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 log_path = os.path.join(BASE_DIR, "log.log")
-DB_FILE = "local_cache.sqlite"
+#DB_FILE = "local_cache.sqlite"
+DB_FILE = os.path.join(BASE_DIR, "local_cache.sqlite")
 LIGHT_ID = 3
-BRIDGE = Bridge(s.url(), config_file_path='phue.conf')
+BRIDGE_PATH = os.path.join(BASE_DIR, 'phue.conf')
+BRIDGE = Bridge(s.url(), config_file_path=BRIDGE_PATH)
 
 
 def main():
