@@ -291,7 +291,8 @@ def set_state(data):
     # press the button and call connect()
     # (this only needs to be run a single time)
     try:
-        b = Bridge(s.url())
+        url = s.url()
+        b = Bridge(url)
         b.connect()
         hue = b.get_api()
     except Exception as e:
