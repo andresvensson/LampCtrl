@@ -29,6 +29,8 @@ developing = s.settings()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 log_path = os.path.join(BASE_DIR, "log.log")
 DB_FILE = "local_cache.sqlite"
+LIGHT_ID = 3
+BRIDGE = Bridge(s.url())
 
 
 def main():
@@ -88,7 +90,7 @@ def check_interrupts() -> dict:
     try:
         db = pymysql.connect(host=h, user=u, passwd=p, db=d)
         c = db.cursor()
-        c.execute(f"SELECT * FROM eventlog WHERE unit_id=3 ORDER BY value_id DESC LIMIT 1")
+        c.execute(f"SELECT * FROM eventlog WHERE unit_id={LIGHT_ID} ORDER BY value_id DESC LIMIT 1")
         sql = c.fetchone()
         c.close()
 
@@ -291,46 +293,41 @@ def set_state(data):
     # press the button and call connect()
     # (this only needs to be run a single time)
     try:
-        url = s.url()
-        b = Bridge(url)
-        b.connect()
-        hue = b.get_api()
+        BRIDGE.connect()
+        hue = BRIDGE.get_light(LIGHT_ID, 'on')
+
     except Exception as e:
         traceback.format_exc()
         logging.error(f"Error, Could not reach hue lamp: {e}")
 
     if hue:
-        if hue['lights']['3']['state']['on']:
-            logging.info("Lamp state: ON")
-            if data['daylight']:
-                logging.info("Its daylight so lamp should be turned off")
-                turn_off()
-            else:
-                logging.info("and its nightfall so all good")
+        logging.info("Lamp state: ON")
+        if data['daylight']:
+            logging.info("Its daylight so lamp should be turned off")
+            turn_off()
+        else:
+            logging.info("and its nightfall so all good")
 
-        if not hue['lights']['3']['state']['on']:
-            logging.info("lamp state: OFF")
-            if data['nightfall'] and not data['ban_time']:
-                logging.info("Its nightfall and outside ban time so lamp should be turned on")
-                turn_on()
-            else:
-                logging.info("and its daylight or ban time so lamp toggle should not be done")
-                pass
     else:
-        logging.warning("No info from hue bridge")
-        pass
+        logging.info("lamp state: OFF")
+        if data['nightfall'] and not data['ban_time']:
+            logging.info("Its nightfall and outside ban time so lamp should be turned on")
+            turn_on()
+        else:
+            logging.info("and its daylight or ban time so lamp toggle should not be done")
+            pass
 
 
 def turn_on():
-    url = s.url()
+    #url = s.url()
     logging.info("Send ON signal to lamp")
-    Bridge(url).set_light(3, 'on', True)
+    BRIDGE.set_light(LIGHT_ID, 'on', True)
     print("Turn on lamp")
 
 def turn_off():
-    url = s.url()
+    #url = s.url()
     logging.info("Send OFF signal to lamp")
-    Bridge(url).set_light(3, 'on', False)
+    BRIDGE.set_light(LIGHT_ID, 'on', False)
     print("Turn off lamp")
 
 
