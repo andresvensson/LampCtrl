@@ -16,8 +16,6 @@ import secret as s
 from phue import Bridge
 
 # CONFIG
-# what unit?
-LIGHT_ID = 3
 
 # hours to sleep if lamp toggled by homepage:
 interruption_delay = 8
@@ -40,6 +38,7 @@ def main():
 
         # default sleep time 1 hour
         sleep = 60 * 60
+        traceback.format_exc()
 
         interrupt_data = check_interrupts()
         # Recent toggle detected?
@@ -89,7 +88,7 @@ def check_interrupts() -> dict:
     try:
         db = pymysql.connect(host=h, user=u, passwd=p, db=d)
         c = db.cursor()
-        c.execute("SELECT * FROM eventlog WHERE unit_id=3 ORDER BY value_id DESC LIMIT 1")
+        c.execute(f"SELECT * FROM eventlog WHERE unit_id={LIGHT_ID} ORDER BY value_id DESC LIMIT 1")
         sql = c.fetchone()
         c.close()
 
@@ -126,7 +125,6 @@ def check_interrupts() -> dict:
 def check_status():
     d = get_daylight()
 
-    # TODO continue
     ts_now = datetime.datetime.now()
     if d['sunrise'] < ts_now < d['sunset']:
         logging.info("its daylight")
@@ -324,12 +322,12 @@ def set_state(data):
 
 def turn_on():
     logging.info("Send ON signal to lamp")
-    Bridge(s.url).set_light(LIGHT_ID, 'on', True)
+    Bridge(s.url).set_light(3, 'on', True)
     print("Turn on lamp")
 
 def turn_off():
     logging.info("Send OFF signal to lamp")
-    Bridge(s.url).set_light(LIGHT_ID, 'on', False)
+    Bridge(s.url).set_light(3, 'on', False)
     print("Turn off lamp")
 
 
