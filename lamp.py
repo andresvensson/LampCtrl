@@ -1,20 +1,37 @@
 import datetime
 import os
 import logging
+import sys
 import time
+from datetime import timedelta
+from logging import warning
+
 import pymysql
+import sqlite3
+
+# debug import
+import traceback
 
 import secret as s
 from phue import Bridge
 
 # CONFIG
+# what unit?
+LIGHT_ID = 3
+
 # hours to sleep if lamp toggled by homepage:
 interruption_delay = 8
+
+# sleep hours when lamp not allowed to turn on by this code
+SLEEP_FROM = "23:00"
+SLEEP_TO = "08:00"
+
 developing = s.settings()
 # path for local database
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 #db_path = os.path.join(BASE_DIR, "database.db")
 log_path = os.path.join(BASE_DIR, "log.log")
+DB_FILE = "local_cache.sqlite"
 
 
 # TODO
@@ -22,236 +39,307 @@ log_path = os.path.join(BASE_DIR, "log.log")
 # edit print statement in main loop
 # manage logging statements
 # fix daylight toggle time (check 02:05?), determine which is closer sr/ss
+# If lamp has been toggled and 8h has passed, do not turn on lamp if time is sleep hours
 
 
-class CtrlLamp:
-    """
-    Turn on at night and off at day (+2h day?, maybe later)
-    Get daylight from remote db (or fall back to a default)
-    while loop, except when developing
-    """
-    def __init__(self) -> None:
-        self.data = None
-        self.interruption_data = None
-        self.hold = bool
-        self.url = s.url()
-        self.interruption_delay = interruption_delay
-        self.sleep = 2.0
-
-        while True:
-            self.hold = True
-            while self.hold:
-                self.check_interrupts()
-            self.get_daylight()
-            self.set_state()
-            self.sleep = self.get_sleep()
-
-            if developing:
-                self.print_data()
-                break
-            else:
-                msg = "sleep for {0} minutes".format(round(self.sleep / 60))
-                logging.info(msg)
-                print(msg)
-                time.sleep(self.sleep)
-
-        logging.info("DEV: Code completed")
-        return
-
-    def check_interrupts(self):
-        logging.info("check if any choices was made via homepage. Interruption delay set for " +
-                     str(self.interruption_delay) + " hours")
-        h, u, p, d = s.sql_lampdb()
-        sql = None
-
-        try:
-            db = pymysql.connect(host=h, user=u, passwd=p, db=d)
-            c = db.cursor()
-            c.execute("SELECT * FROM eventlog WHERE unit_id=3 ORDER BY value_id DESC LIMIT 1")
-            sql = c.fetchone()
-            c.close()
-
-        except pymysql.Error as e:
-            msg = "Error reading DB: {0}\nFallback to default schema".format(e)
-            print(msg)
-            logging.warning(msg)
-
+def main():
+    while True:
+        logging.info("in main loop")
         ts_now = datetime.datetime.now()
-        d = {}
-        if sql:
-            d['hueDB_value_id'] = sql[0]
-            d['hueDB_ts_db'] = sql[1]
-            d['hueDB_ts_code'] = sql[2]
-            d['hueDB_unit_id'] = sql[3]
-            d['hueDB_event'] = sql[4]
 
-            d['hueDB_break_time'] = d['hueDB_ts_code'] + datetime.timedelta(hours=self.interruption_delay)
+        # default sleep time 1 hour
+        sleep = 60 * 60
 
-            self.interruption_data = d
-
-            if developing:
-                sleep_time = d['hueDB_break_time'] - ts_now
+        interrupt_data = check_interrupts()
+        # Recent toggle detected?
+        if interrupt_data['got_data']:
+            # interruption time relevant?
+            if interrupt_data['hueDB_break_time'] < ts_now:
+                logging.info(f"interrupt time not relevant [{interrupt_data['hueDB_break_time']}]")
+            else:
+                logging.info("set sleep due to interrupt")
+                sleep_time = interrupt_data['hueDB_break_time'] - ts_now
                 sleep_time_sec = sleep_time.total_seconds()
-                delay_stop = sleep_time + ts_now
-                logging.info("lamp should not be controlled now. Waiting [" + str(sleep_time) + "], trigger time: "
-                             + str(delay_stop))
-                self.hold = False
-                return
 
-            # Has outlet been given order by webb page within the delay period?
-            else:
-                if d['hueDB_break_time'] > ts_now:
-                    sleep_time = d['hueDB_break_time'] - ts_now
-                    sleep_time_sec = sleep_time.total_seconds()
-                    delay_stop = sleep_time + ts_now
-                    logging.info("lamp should not be controlled now. Waiting [" + str(sleep_time) + "], trigger time: "
-                                 + str(delay_stop))
-                    print("lamp should not be controlled now. Waiting [" + str(sleep_time) + "], trigger time: "
-                          + str(delay_stop))
-                    time.sleep(sleep_time_sec + 5)
-                    # loop code once more to be sure
-                    self.hold = True
-                    return
+                # Interruption ends before 1 hour
+                if sleep > sleep_time_sec:
+                    sleep = sleep_time_sec + 5
+                    return sleep
                 else:
-                    logging.info("Lamp has not been toggled for the set time. Proceed to check daylight")
-                    self.hold = False
-                    return
-        else:
-            logging.warning("No info from hue database. Don´t know if lamp manually toggled")
-            self.hold = False
-            pass
-
-    def set_state(self):
-        logging.info("Connect to lamp")
-        hue = None
-        # If the app is not registered and the button is not pressed,
-        # press the button and call connect()
-        # (this only needs to be run a single time)
-        try:
-            b = Bridge(s.url())
-            b.connect()
-            hue = b.get_api()
-        except Exception as e:
-            msg = "Error, Could not reach hue lamp: {}".format(e)
-            logging.error(msg)
-
-        if hue:
-            if hue['lights']['3']['state']['on']:
-                logging.info("Lamp state: ON")
-                if self.data['daylight']:
-                    logging.info("Its daylight so lamp should be turned off")
-                    self.turn_off()
-                else:
-                    logging.info("and its nightfall so all good")
-
-            if not hue['lights']['3']['state']['on']:
-                logging.info("lamp state: OFF")
-                if self.data['nightfall']:
-                    logging.info("Its nightfall so lamp should be turned on")
-                    self.turn_on()
-                else:
-                    logging.info("and its daylight so all good")
                     pass
+
         else:
-            logging.warning("No info from hue bridge")
-            pass
-
-    def turn_on(self):
-        logging.info("Send ON signal to lamp")
-        Bridge(self.url).set_light(3, 'on', True)
-        print("Turn on lamp")
-
-    def turn_off(self):
-        logging.info("Send OFF signal to lamp")
-        Bridge(self.url).set_light(3, 'on', False)
-        print("Turn off lamp")
-
-    def get_daylight(self):
-        logging.info("Connect to remote db and set day or night status")
-        h, u, p, d = s.sql()
-        sql = None
+            # has no data from database or no toggle detected. Follow hard coded schema
+            logging.info("No information from HUE database or Lamp has not been toggled for the set delay time. Proceed to check daylight")
 
         try:
-            # TODO
-            db = pymysql.connect(host=h, user=u, passwd=p, db=d)
-            c = db.cursor()
-            c.execute("SELECT value_id, time_stamp, sunrise, sunset, api_time "
-                      "FROM weather_outside ORDER BY value_id DESC LIMIT 1")
-            sql = c.fetchone()
-            c.close()
+            check_status()
+        except Exception as e:
+            logging.error(f"could not get status, error:\n{e}")
 
-        except pymysql.Error as e:
-            msg = "Error reading DB: {0}\nFallback to default schema".format(e)
-            print(msg)
-            logging.warning(msg)
+        if developing:
+            if sleep > 60:
+                msg = f"{round(sleep / 60)} min"
+            else:
+                msg = f"{sleep} sec"
+            print(f"DEV STOP\nsleep time set to {msg}")
+            logging.warning(f"DEV STOP\nsleep time set to {msg}")
+            break
 
-        ts_now = datetime.datetime.now()
-        d = {}
-        if sql:
-            d['ts'] = datetime.datetime.now()
-            d['raw_data'] = sql
-            d['time_stamp'] = sql[1]
+        time.sleep(sleep)
 
-            d['td_sunrise'] = sql[2]
-            d['td_sunset'] = sql[3]
 
-            d['api_time'] = sql[4]
 
-            # compensate for sunset/sunrise being timedelta object
-            # also add 1 hour for timezone corrections
-            ts = ts_now.replace(hour=1, minute=0, second=0, microsecond=0)
-            d['sunrise'] = ts + d['td_sunrise']
-            d['sunset'] = ts + d['td_sunset']
+def check_interrupts() -> dict:
+    logging.info(f"check if any choices was made via homepage. Interruption delay set for {interruption_delay} hours")
+    h, u, p, d = s.sql_lampdb()
+    sql = None
 
+    try:
+        db = pymysql.connect(host=h, user=u, passwd=p, db=d)
+        c = db.cursor()
+        c.execute("SELECT * FROM eventlog WHERE unit_id=3 ORDER BY value_id DESC LIMIT 1")
+        sql = c.fetchone()
+        c.close()
+
+    except pymysql.Error as e:
+        msg = f"Error reading DB\n{e}"
+        print(msg)
+        logging.warning(msg)
+
+    d = {}
+
+    if sql:
+        d['got_data'] = True
+        d['hueDB_value_id'] = sql[0]
+        d['hueDB_ts_db'] = sql[1]
+        d['hueDB_ts_code'] = sql[2]
+        d['hueDB_unit_id'] = sql[3]
+        d['hueDB_event'] = sql[4]
+
+        d['hueDB_break_time'] = d['hueDB_ts_code'] + datetime.timedelta(hours=interruption_delay)
+
+        if developing:
+            print("...............DATA...............")
+            for x in d:
+                print("KEY:", x, ":", "VAL:", d[x], "TYPE:", type(d[x]))
+            print("..................................")
+
+    else:
+        logging.warning("No info from hue database. Don´t know if lamp manually toggled")
+        d['got_data'] = False
+
+    return d
+
+
+def check_status():
+    d = get_daylight()
+
+    # TODO continue
+    ts_now = datetime.datetime.now()
+    if d['sunrise'] < ts_now < d['sunset']:
+        logging.info("its daylight")
+        d['daylight'] = True
+        d['nightfall'] = False
+    else:
+        logging.info("its nighttime")
+        d['daylight'] = False
+        d['nightfall'] = True
+
+    # Convert strings → time objects
+    t_from = datetime.datetime.strptime(SLEEP_FROM, "%H:%M").time()
+    t_to = datetime.datetime.strptime(SLEEP_TO, "%H:%M").time()
+
+    now = ts_now.time()
+
+    # Check range, including crossing midnight
+    if t_from < t_to:
+        # Normal range (e.g., 07:00 → 22:00)
+        sleeping = t_from <= now < t_to
+    else:
+        # Cross-midnight range (23:00 → 08:00)
+        sleeping = now >= t_from or now < t_to
+
+    d['ban_time'] = sleeping
+
+
+    if developing:
+        print("...............DATA...............")
+        for x in d:
+            print("KEY:", x, ":", "VAL:", d[x], "TYPE:", type(d[x]))
+        print("..................................")
+
+    set_state(d)
+
+
+def get_daylight() -> dict:
+    logging.info("Get sunrise and sunset times")
+    init_cache()
+    # check sqlite if data old, get daylight from db, store it in sql
+    d = load_cache()
+
+    ts_now = datetime.datetime.now()
+    if d:
+        logging.info("Got cached values")
+        if d['timestamp'] > ts_now + timedelta(days=-1):
+            logging.info("Using cached values")
+            return d
         else:
-            # a default on/off time
-            d['sunrise'] = ts_now.replace(hour=7, minute=30, second=0)
-            d['sunset'] = ts_now.replace(hour=18, minute=0, second=0)
+            logging.warning("Could not get cached data or data is old")
+    try:
+        d = get_remote_data()
+        return d
 
-        if d['sunrise'] < ts_now < d['sunset']:
-            logging.info("its daylight")
-            d['daylight'] = True
-            d['nightfall'] = False
-        else:
-            logging.info("its nighttime")
-            d['daylight'] = False
-            d['nightfall'] = True
+    except Exception as e:
+        print(f"Error get remote data\n{e}")
+        logging.exception(f"Error get remote data\n{e}")
+        if d:
+            logging.warning("⚠ Using old cached values due to remote error")
+            return d
 
-        self.data = d
+    logging.exception("⚠ Using hard coded values due to remote error and no cached data")
+    d['sunrise'] = ts_now.replace(hour=7, minute=30, second=0)
+    d['sunset'] = ts_now.replace(hour=18, minute=0, second=0)
 
-    def get_sleep(self):
-        sec = 0
-        ts_now = datetime.datetime.now()
+    return d
 
-        # calculate time to sunrise (same day) 00:00 -> 07:30
-        if ts_now < self.data['sunrise']:
-            sec = self.data['sunrise'] - ts_now
 
-        # to sunset same day 07:30 -> 18:00
-        if self.data['sunrise'] < ts_now < self.data['sunset']:
-            sec = self.data['sunset'] - ts_now
+def get_remote_data() -> dict:
+    logging.info("Connect to remote db and set day or night status")
+    h, u, p, d = s.sql()
+    sql = None
 
-        # to next the day 18:00 -> next day
-        elif ts_now > self.data['sunset']:
-            time_delta = datetime.timedelta(days=1)
-            stop_date = ts_now + time_delta
-            stop_date = stop_date.replace(hour=2, minute=5)
-            sec = stop_date - ts_now
+    try:
+        # TODO
+        db = pymysql.connect(host=h, user=u, passwd=p, db=d)
+        c = db.cursor()
+        c.execute("SELECT value_id, time_stamp, sunrise, sunset "
+                  "FROM weather_outside ORDER BY value_id DESC LIMIT 1")
+        sql = c.fetchone()
+        c.close()
 
-        self.sleep = sec.total_seconds() + 5
-        return self.sleep
+    except pymysql.Error as e:
+        logging.warning(f"Error reading DB: {e}\nFallback to default schema")
 
-    def print_data(self):
+    d = {}
+    if sql:
+        d['timestamp'] = sql[1]
 
-        if isinstance(self.data, dict):
-            if isinstance(self.interruption_data, dict):
-                self.data.update(self.interruption_data)
+        # compensate for sunset/sunrise being timedelta object
+        # also add 1 hour for timezone corrections
+        sr = sql[2] + datetime.timedelta(hours=1)
+        ss = sql[3] + datetime.timedelta(hours=1)
 
-            for d in self.data:
-                print(d, ":", self.data[d], type(self.data[d]))
-        else:
-            print("data to print")
-            print(self.data)
+        d['sunrise'] = datetime.datetime.combine(datetime.date.today(), (datetime.datetime.min + sr).time())
+        d['sunset'] = datetime.datetime.combine(datetime.date.today(), (datetime.datetime.min + ss).time())
+
+        save_cache(d['timestamp'], d['sunrise'], d['sunset'])
+
+    return d
+
+
+def init_cache():
+    logging.info(f"initiate sqllite3 database ({DB_FILE})")
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS daily_cache (
+            cache_date TEXT PRIMARY KEY,
+            timestamp TEXT,
+            sunrise TEXT,
+            sunset TEXT
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+def save_cache(timestamp: datetime, sunrise: datetime, sunset: datetime):
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    today = datetime.date.today().isoformat()
+
+    cur.execute("""
+        INSERT OR REPLACE INTO daily_cache (cache_date, timestamp, sunrise, sunset)
+        VALUES (?, ?, ?, ?)
+    """, (today,
+          timestamp.isoformat(),
+          sunrise.isoformat(),
+          sunset.isoformat()))
+
+    conn.commit()
+    conn.close()
+    logging.info("Values cached")
+
+
+def load_cache():
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    today = datetime.date.today().isoformat()
+
+    cur.execute("SELECT timestamp, sunrise, sunset FROM daily_cache WHERE cache_date = ?", (today,))
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    ts, sunrise, sunset = row
+    return {
+        "timestamp": datetime.datetime.fromisoformat(ts),
+        "sunrise": datetime.datetime.fromisoformat(sunrise),
+        "sunset": datetime.datetime.fromisoformat(sunset)
+    }
+
+
+def set_state(data):
+    logging.info("Connect to lamp")
+    hue = None
+    # If the app is not registered and the button is not pressed,
+    # press the button and call connect()
+    # (this only needs to be run a single time)
+    try:
+        b = Bridge(s.url())
+        b.connect()
+        hue = b.get_api()
+    except Exception as e:
+        traceback.format_exc()
+        logging.error(f"Error, Could not reach hue lamp: {e}")
+
+    if hue:
+        if hue['lights']['3']['state']['on']:
+            logging.info("Lamp state: ON")
+            if data['daylight']:
+                logging.info("Its daylight so lamp should be turned off")
+                turn_off()
+            else:
+                logging.info("and its nightfall so all good")
+
+        if not hue['lights']['3']['state']['on']:
+            logging.info("lamp state: OFF")
+            if data['nightfall'] and not data['ban_time']:
+                logging.info("Its nightfall and outside ban time so lamp should be turned on")
+                turn_on()
+            else:
+                logging.info("and its daylight or ban time so lamp toggle should not be done")
+                pass
+    else:
+        logging.warning("No info from hue bridge")
+        pass
+
+
+def turn_on():
+    logging.info("Send ON signal to lamp")
+    Bridge(s.url).set_light(LIGHT_ID, 'on', True)
+    print("Turn on lamp")
+
+def turn_off():
+    logging.info("Send OFF signal to lamp")
+    Bridge(s.url).set_light(LIGHT_ID, 'on', False)
+    print("Turn off lamp")
 
 
 if __name__ == "__main__":
@@ -260,7 +348,8 @@ if __name__ == "__main__":
                             format="%(asctime)s - %(levelname)s - %(message)s")
     else:
         #TODO: change INFO -> WARNING
-        logging.basicConfig(level=logging.INFO, filename=log_path, filemode="w",
+        logging.basicConfig(level=logging.WARNING, filename=log_path, filemode="w",
                             format="%(asctime)s - %(levelname)s - %(message)s")
-    logging.info("lamp.py stared standalone")
-    CtrlLamp()
+    logging.info("lamp.py stared")
+    main()
+    #CtrlLamp()
