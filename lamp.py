@@ -44,25 +44,25 @@ def main():
 
         # default sleep time 1 hour
         sleep = 60 * 60
-        traceback.format_exc()
 
         interrupt_data = check_interrupts()
         # Recent toggle detected?
-        if interrupt_data['got_data']:
+        while interrupt_data['got_data']:
             # interruption time relevant?
             if interrupt_data['hueDB_break_time'] < ts_now:
                 logging.info(f"interrupt time not relevant [{interrupt_data['hueDB_break_time']}]")
+                break
             else:
                 logging.info("set sleep due to interrupt")
-                sleep_time = interrupt_data['hueDB_break_time'] - ts_now
-                sleep_time_sec = sleep_time.total_seconds()
+                sleep_time = interrupt_data['hueDB_break_time'] - datetime.datetime.now()
+                sleep = sleep_time.total_seconds() + 5
 
-                # Interruption ends before 1 hour
-                if sleep > sleep_time_sec:
-                    sleep = sleep_time_sec + 5
-                    return sleep
-                else:
-                    pass
+            if developing:
+                logging.warning(f"DEV MODE, skipping sleep for {round((sleep / 60 / 60))} hours (to {interrupt_data['hueDB_break_time']})")
+                break
+            else:
+                time.sleep(sleep)
+                interrupt_data = check_interrupts()
 
         else:
             # has no data from database or no toggle detected. Follow hard coded schema
