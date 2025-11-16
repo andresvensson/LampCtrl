@@ -322,13 +322,15 @@ def set_state(data):
 
 
 def turn_on():
+    url = s.url()
     logging.info("Send ON signal to lamp")
-    Bridge(s.url).set_light(3, 'on', True)
+    Bridge(url).set_light(3, 'on', True)
     print("Turn on lamp")
 
 def turn_off():
+    url = s.url()
     logging.info("Send OFF signal to lamp")
-    Bridge(s.url).set_light(3, 'on', False)
+    Bridge(url).set_light(3, 'on', False)
     print("Turn off lamp")
 
 
