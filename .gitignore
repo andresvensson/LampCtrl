@@ -6,6 +6,7 @@ log.log
 outlet.py
 old_lamp.py
 local_cache.sqlite
+phue.conf
 
 .idea/
 

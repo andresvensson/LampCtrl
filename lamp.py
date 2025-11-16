@@ -30,7 +30,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 log_path = os.path.join(BASE_DIR, "log.log")
 DB_FILE = "local_cache.sqlite"
 LIGHT_ID = 3
-BRIDGE = Bridge(s.url())
+BRIDGE = Bridge(s.url(), config_file_path='phue.conf')
 
 
 def main():
