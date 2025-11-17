@@ -40,26 +40,22 @@ def main():
         ts_now = datetime.datetime.now()
 
         # default sleep time 1 hour
-        sleep = 60 * 60
+        sleep = 3600 # 1 hour
 
         interrupt_data = check_interrupts()
-        # Recent toggle detected?
-        while interrupt_data['got_data']:
-            # interruption time relevant?
-            if interrupt_data['hueDB_break_time'] < ts_now:
-                logging.info(f"interrupt time not relevant [{interrupt_data['hueDB_break_time']}]")
-                break
-            else:
-                logging.info("set sleep due to interrupt")
-                sleep_time = interrupt_data['hueDB_break_time'] - datetime.datetime.now()
-                sleep = sleep_time.total_seconds() + 5
 
-            if developing:
-                logging.warning(f"DEV MODE, skipping sleep for {round((sleep / 60 / 60))} hours (to {interrupt_data['hueDB_break_time']})")
-                break
-            else:
-                time.sleep(sleep)
-                interrupt_data = check_interrupts()
+        # Recent toggle detected?
+        if interrupt_data['active_ban']:
+            logging.info("set sleep due to interrupt")
+            break_time = interrupt_data['hueDB_break_time']
+            if break_time > ts_now:
+                sleep = (break_time - ts_now).total_seconds() + 5
+                logging.warning(f"sleeping until: {break_time} due to changes made within {interruption_delay} hours")
+                if developing:
+                    logging.warning(
+                        f"DEV MODE, skipping sleep for {round((sleep / 60 / 60))} hours (to {interrupt_data['hueDB_break_time']})")
+                else:
+                    time.sleep(sleep)
 
         else:
             # has no data from database or no toggle detected. Follow hard coded schema
@@ -68,19 +64,18 @@ def main():
         try:
             check_status()
         except Exception as e:
-            logging.error(f"could not get status, error:\n{e}")
+            logging.error(f"could not get status: {e}")
 
         if developing:
             if sleep > 60:
                 msg = f"{round(sleep / 60)} min"
             else:
                 msg = f"{sleep} sec"
-            print(f"DEV STOP\nsleep time set to {msg}")
-            logging.warning(f"DEV STOP\nsleep time set to {msg}")
+            print(f"DEV STOP - would sleep {msg}")
+            logging.warning(f"DEV STOP - would sleep {msg}")
             break
 
         time.sleep(sleep)
-
 
 
 def check_interrupts() -> dict:
@@ -100,10 +95,9 @@ def check_interrupts() -> dict:
         print(msg)
         logging.warning(msg)
 
-    d = {}
+    d = {'active_ban': False}
 
     if sql:
-        d['got_data'] = True
         d['hueDB_value_id'] = sql[0]
         d['hueDB_ts_db'] = sql[1]
         d['hueDB_ts_code'] = sql[2]
@@ -111,6 +105,10 @@ def check_interrupts() -> dict:
         d['hueDB_event'] = sql[4]
 
         d['hueDB_break_time'] = d['hueDB_ts_code'] + datetime.timedelta(hours=interruption_delay)
+        if d['hueDB_break_time'] > datetime.datetime.now():
+            d['active_ban'] = True
+        else:
+            logging.info(f"interrupt time not relevant [{d['hueDB_break_time']}]")
 
         if developing:
             print("...............DATA...............")
@@ -120,7 +118,6 @@ def check_interrupts() -> dict:
 
     else:
         logging.warning("No info from hue database. Don´t know if lamp manually toggled")
-        d['got_data'] = False
 
     return d
 
@@ -326,7 +323,6 @@ def turn_on():
     print("Turn on lamp")
 
 def turn_off():
-    #url = s.url()
     logging.info("Send OFF signal to lamp")
     BRIDGE.set_light(LIGHT_ID, 'on', False)
     print("Turn off lamp")
