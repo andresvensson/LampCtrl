@@ -56,7 +56,6 @@ def main():
                         f"DEV MODE, skipping sleep for {round((sleep / 60 / 60))} hours (to {interrupt_data['hueDB_break_time']})")
                 else:
                     time.sleep(sleep)
-
         else:
             # has no data from database or no toggle detected. Follow hard coded schema
             logging.info("No information from HUE database or Lamp has not been toggled for the set delay time. Proceed to check daylight")
@@ -213,7 +212,6 @@ def get_remote_data() -> dict:
     d = {}
     if sql:
         d['timestamp'] = sql[1]
-
         # compensate for sunset/sunrise being timedelta object
         # also add 1 hour for timezone corrections
         sr = sql[2] + datetime.timedelta(hours=1)
@@ -243,6 +241,7 @@ def init_cache():
 
     conn.commit()
     conn.close()
+
 
 def save_cache(timestamp: datetime, sunrise: datetime, sunset: datetime):
     conn = sqlite3.connect(DB_FILE)
@@ -305,7 +304,6 @@ def set_state(data):
             turn_off()
         else:
             logging.info("and its nightfall so all good")
-
     else:
         logging.info("lamp state: OFF")
         if data['nightfall'] and not data['ban_time']:
@@ -315,9 +313,7 @@ def set_state(data):
             logging.info("and its daylight or ban time so lamp toggle should not be done")
             pass
 
-
 def turn_on():
-    #url = s.url()
     logging.info("Send ON signal to lamp")
     BRIDGE.set_light(LIGHT_ID, 'on', True)
     print("Turn on lamp")
