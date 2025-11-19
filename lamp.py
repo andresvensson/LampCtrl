@@ -19,7 +19,7 @@ from phue import Bridge
 
 # hours to sleep if lamp toggled by homepage:
 interruption_delay = 8
-LIGHT_ID = 3
+LIGHT_ID = s.unit_id()
 
 # sleep hours when lamp not allowed to turn on by this code
 SLEEP_FROM = "23:00"
@@ -66,7 +66,9 @@ def main():
             logging.error(f"could not get status: {e}")
 
         if developing:
-            if sleep > 60:
+            if sleep > 600:
+                msg = f"{round((sleep / 60) / 60)} hours"
+            elif 599 > sleep > 60:
                 msg = f"{round(sleep / 60)} min"
             else:
                 msg = f"{sleep} sec"
@@ -173,7 +175,9 @@ def get_daylight() -> dict:
             logging.info("Using cached values")
             return d
         else:
-            logging.warning("Could not get cached data or data is old")
+            logging.warning("Cached data is old")
+    else:
+        logging.info("Connect to remote database instead")
     try:
         d = get_remote_data()
         return d
@@ -273,6 +277,7 @@ def load_cache():
     conn.close()
 
     if not row:
+        logging.warning("No cached values found")
         return None
 
     ts, sunrise, sunset = row
