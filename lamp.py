@@ -18,7 +18,7 @@ from datetime import datetime, date, timedelta
 # CONFIG
 
 # hours to sleep if lamp toggled by homepage:
-interruption_delay = 8
+interruption_delay = 12
 LIGHT_ID = s.unit_id()
 developing = s.settings()
 
